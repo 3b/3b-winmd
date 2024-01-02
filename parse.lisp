@@ -1002,11 +1002,6 @@
   (size s:uint32)
   (name pad-string))
 
-(defmethod s::extra-bindings ((name (eql 'header)))
-  `((string-cache (make-hash-table))
-    (guid-cache (make-hash-table))
-    (blob-cache (make-hash-table))))
-
 (s:define-io-structure ~stream
   (reserved s:uint32) ;; 0
   (major s:uint8)     ;; 2
@@ -1032,7 +1027,7 @@
   (version (string (s:slot version-length)))
   (flags s:uint16) ;; 0
   (stream-count s:uint16)
-  (streams (vector stream-header (s:slot stream-count)) :bind *streams*)
+  (streams (vector stream-header (s:slot stream-count)))
   (~ ~stream :offset (stream-header-offset
                       (find "#~" (s:slot streams)
                             :key 'stream-header-name
