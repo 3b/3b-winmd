@@ -913,19 +913,22 @@
                          :name (exported-type-type-name x)))
     (t (name x))))
 
+(defvar *translate-names-with-namespaces* t)
 (defun namespaced-name/s (x)
-  (typecase x
-    ;; possibly should intern these somewhere to save some space
-    (type-def (format nil "~a::~a"
-                      (type-def-type-namespace x)
-                      (type-def-type-name x)))
-    (type-ref (format nil "~a::~a"
-                      (type-ref-type-namespace x)
-                      (type-ref-type-name x)))
-    (exported-type (format nil "~a::~a"
-                           (exported-type-type-namespace x)
-                           (exported-type-type-name x)))
-    (t (when x (name x)))))
+  (if *translate-names-with-namespaces*
+      (typecase x
+        ;; possibly should intern these somewhere to save some space
+        (type-def (format nil "~a::~a"
+                          (type-def-type-namespace x)
+                          (type-def-type-name x)))
+        (type-ref (format nil "~a::~a"
+                          (type-ref-type-namespace x)
+                          (type-ref-type-name x)))
+        (exported-type (format nil "~a::~a"
+                               (exported-type-type-namespace x)
+                               (exported-type-type-name x)))
+        (t (when x (name x))))
+      (name x)))
 
 (defun ns-equal (x namespace name)
   (equalp (namespaced-name x)
@@ -2038,10 +2041,24 @@
              ;; add namespace name nested-name for nested classes
              ;; without namespace so we can resolve type-refs for
              ;; anonymous nested classes
+             (when (gethash i *nested-class-index*)
+               (loop with n = (list (type-def-type-name i))
+                     for nc = (gethash i *nested-class-index*)
+                       then (gethash ec *nested-class-index*)
+                     for ec = (nested-class-enclosing-class nc)
+                     for ns = (type-def-type-namespace ec)
+                     do (push (type-def-type-name ec) n)
+                     when ns
+                       do (push ns n)
+                     until (type-def-type-namespace ec)
+                     finally (setf (gethash n *type-def-by-name*)
+                                   i)))
+             #++
              (loop for nc in (gethash i *enclosing-class-index*)
                    for n = (nested-class-nested-class nc)
                    unless (type-def-type-namespace n)
-                     do (setf (gethash (list (type-def-type-namespace i)
+                     do (unless (type-def-type-namespace i))
+                        (setf (gethash (list (type-def-type-namespace i)
                                              (type-def-type-name i)
                                              (type-def-type-name n))
                                        *type-def-by-name*)
@@ -2270,14 +2287,26 @@
                      (deref
                       (when (typep type 'type-ref)
                         (let ((new (gethash
-                                    (if (type-ref-type-namespace type)
-                                        (list (type-ref-type-namespace type)
-                                              (type-ref-type-name type))
-                                        (list (type-ref-type-namespace
-                                               (type-ref-resolution-scope type))
-                                              (type-ref-type-name
-                                               (type-ref-resolution-scope type))
-                                              (type-ref-type-name type)))
+                                    (cond
+                                      ((type-ref-type-namespace type)
+                                       (list (type-ref-type-namespace type)
+                                             (type-ref-type-name type)))
+                                      ((type-ref-type-namespace
+                                        (type-ref-resolution-scope type))
+                                       (list (type-ref-type-namespace
+                                              (type-ref-resolution-scope type))
+                                             (type-ref-type-name
+                                              (type-ref-resolution-scope type))
+                                             (type-ref-type-name type)))
+                                      (t
+                                       (reverse
+                                        (loop for type1 = type
+                                                then (type-ref-resolution-scope type1)
+                                              for ns = (type-ref-type-namespace type1)
+                                              collect (type-ref-type-name type1)
+                                              when ns
+                                                collect ns
+                                              until ns))))
                                     *type-def-by-name*
                                     type)))
                           (assert (not (eql type new)))
@@ -2425,6 +2454,42 @@
 
 ;; todo: make these name translations generic, so we can have
 ;; different sets for different purposes
+
+(defun translate-camelcase (name)
+  ;; todo: fix things like Win32, probably should be win32 instead of win-32?
+  (if (symbolp name)
+      name ;; assume symbols are already correct (:void :int etc)
+      (with-output-to-string (s)
+        (loop with state = :start
+              for i below (length name)
+              for c across name
+              for n = (if (array-in-bounds-p name (1+ i))
+                          (aref name (1+ i))
+                          #\nul)
+              do (cond
+                   ((upper-case-p c)
+                    (cond
+                      ((eql state :start))
+                      ((or ;; transition to upper-case
+                        (not (eql state :uc))
+                        ;; run of upper-case, then transition to
+                        ;; lower
+                        (and (eql state :uc)
+                             (lower-case-p n)))
+                       (format s "-")))
+                    (setf state :uc))
+                   ((and (digit-char-p c) (not (eql state :d)))
+                    (format s "-")
+                    (setf state :d))
+                   ((eql c #\_)
+                    (format s "-")
+                    (setf state :start))
+                   ((position c "")
+                    (setf state :start))
+                   (t (setf state :lc)))
+                 (unless (eql c #\_)
+                   (format s "~c" (char-downcase c)))))))
+
 (defun translate-namespace-for-ffi (x)
   (let ((ns (if (stringp x) x (namespace x))))
     ;; todo: split by #\., MixedCase -> MIXED-CASE, rejoin with #\.
@@ -2433,26 +2498,22 @@
 (defun translate-enum-name-for-ffi (x parent flag-p)
   (declare (ignore parent flag-p))
   (let ((name (if (stringp x) x (name x))))
-    ;; todo: pfxMixedFOOCase12 -> PFX-MIXED-FOO-CASE-12
-    name))
+    (translate-camelcase name)))
 
 (defun translate-function-name-for-ffi (x)
   (let ((name (if (stringp x) x (namespaced-name/s x))))
-    ;; todo: pfxMixedFOOCase12 -> PFX-MIXED-FOO-CASE-12
-    name))
+    (translate-camelcase name)))
 
 (defun translate-dll-name-for-ffi (x)
   (subseq x 0 (search ".dll" x)))
 
 (defun translate-slot-name-for-ffi (x)
   (let ((name (if (stringp x) x (name x))))
-    ;; todo: pfxMixedFOOCase12 -> PFX-MIXED-FOO-CASE-12
-    name))
+    (translate-camelcase name)))
 
 (defun translate-arg-name-for-ffi (x)
   (let ((name (if (stringp x) x (name x))))
-    ;; todo: pfxMixedFOOCase12 -> PFX-MIXED-FOO-CASE-12
-    name))
+    (translate-camelcase name)))
 
 (defun translate-type-name-for-ffi (x)
   (cond
@@ -2463,8 +2524,7 @@
      (let ((name (if (stringp x)
                      x
                      (namespaced-name/s x))))
-       ;; todo: pfxMixedFOOCase12 -> PFX-MIXED-FOO-CASE-12
-       name))))
+       (translate-camelcase name)))))
 
 (defun translate-struct-name-for-ffi (x)
   (translate-type-name-for-ffi x))
