@@ -901,19 +901,21 @@
     (exported-type (exported-type-type-namespace x))
     (t nil)))
 
-(defun namespaced-name (x)
-  (typecase x
-    ;; possibly should (optionally?) intern these lists somewhere to
-    ;; allow saving some space
-    (type-def (list :namespace (type-def-type-namespace x)
-                    :name (type-def-type-name x)))
-    (type-ref (list :namespace (type-ref-type-namespace x)
-                    :name (type-ref-type-name x)))
-    (exported-type (list :namespace (exported-type-type-namespace x)
-                         :name (exported-type-type-name x)))
-    (t (name x))))
-
 (defvar *translate-names-with-namespaces* t)
+(defun namespaced-name (x)
+  (if *translate-names-with-namespaces*
+      (typecase x
+        ;; possibly should (optionally?) intern these lists somewhere to
+        ;; allow saving some space
+        (type-def (list :namespace (type-def-type-namespace x)
+                        :name (type-def-type-name x)))
+        (type-ref (list :namespace (type-ref-type-namespace x)
+                        :name (type-ref-type-name x)))
+        (exported-type (list :namespace (exported-type-type-namespace x)
+                             :name (exported-type-type-name x)))
+        (t (name x)))
+      (name x)))
+
 (defun namespaced-name/s (x)
   (if *translate-names-with-namespaces*
       (typecase x
@@ -979,6 +981,7 @@
                 for table-type = (aref *tables* i)
                 when table-type
                   collect `(when (logbitp ,i ,(valid type))
+                             #++
                              (format t "read table ~s = ~s (size ~s) @ ~x (~x) (~x)~%"
                                      ,i ',table-type
                                      (aref *table-sizes* ,i)
@@ -2368,10 +2371,7 @@
               (let ((sa (getf (gethash x *attribute-plist*) :supported-architecture)))
                 (when (and sa (not (member *architecture* sa))
                            (string= (name x) "MEMORY_BASIC_INFORMATION"))
-                  #++(break "drop ~s ~s~% ~s"
-                            sa (namespaced-name/s x)
-                            (gethash x *attribute-plist*))
-                  (format t "drop ~s ~s~%"
+                  #++(format t "drop ~s ~s~%"
                           sa (namespaced-name/s x)))
                 (and sa (not (member *architecture* sa)))))
     (labels ((align (value alignment)
@@ -2992,7 +2992,7 @@
                                               (- size *offset*)))))
                  `((,a (alexandria:read-file-into-byte-vector ,filename))
                    (,winmd-var (read-header ,a :start *offset*)))))
-       (format t "done reading file ~s~%" (type-of ,winmd-var))
+       #++(format t "done reading file ~s~%" (type-of ,winmd-var))
        (finish-output *standard-output*)
        (update-table-refs ,winmd-var)
        (update-indices ,winmd-var)

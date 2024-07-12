@@ -271,7 +271,7 @@
            (format nil "~(~a~)" name))))))
 
 (defun gen-cffi-simple/struct (x)
-  (destructuring-bind (size align base) (gethash x *type-def-info*)
+  (destructuring-bind (size align base) (update-type-def-size x)
     (assert (and size align base))
     (let ((nested-types (make-hash-table :test 'equalp)))
       (labels (#++
@@ -728,7 +728,76 @@
                         (format nil "~a::~a" (getf ns :namespace) (getf ns :name))
                         (name (type-def-extends x))))))))))
 
+;; string -> list of namespaced names
+(defvar *apropos* (make-hash-table :test 'equal))
 
+(defun make-apropos ()
+  (clrhash *apropos*)
+  (loop for typename being the hash-keys of *type-def-by-name*
+          using (hash-value type)
+        for path = (reverse typename)
+        for name = (first path)
+        do (if (string= name "Apis")
+               (pop path)
+               (push typename (gethash name *apropos*)))
+           (loop for m across (type-def-method-list type)
+                 do (push (reverse (cons (name m) path))
+                          (gethash (name m) *apropos*)))))
+
+;; public api for simple ffi generator
+(defun simple-ffi-gen (names)
+  (let ((*cffi-simple-seen* (make-hash-table))
+        (*cffi-package* "cffi:")
+        (*translate-names-with-namespaces* nil)
+        (*apropos* (make-hash-table :test 'equal))
+        (types nil)
+        (functions nil))
+    (with-winmd (w #p"~/quicklisp/local-projects/3b-winmd/md/Windows.Win32.winmd")
+      ;; make sure to do this inside with-winmd so apropos contains
+      ;; values matching ones we just loaded
+      (make-apropos)
+      (loop for n1 in names
+            for n2 = (if (consp n1) (list n1) (gethash n1 *apropos*))
+            for n = (car n2)
+            do (cond
+                 ((= 0 (length n2))
+                  (error "couldn't find name ~s" n1))
+                 ((< 1 (length n2))
+                  (error "ambiguos name ~s:~%~{ ~s~%~}" n1 n2)))
+               (cond
+                 ((gethash n *type-def-by-name*)
+                  (push (gethash n *type-def-by-name*) types))
+                 ;; todo: make a function index that takes full path
+                 ;; name like *type-def-by-name*
+                 ((and (= 2 (length n))
+                       (ignore-errors (apply #'lookup-function n)))
+                  (push (apply #'lookup-function n) functions))
+                 ((and (= 3 (length n))
+                       (ignore-errors (lookup-function (first n) (third n)
+                                                       :type (second n))))
+                  (push (lookup-function (first n) (third n)
+                                         :type (second n))
+                        functions))
+                 (t (error "couldn't find name ~s?" n))))
+      ;; don't dump WIN32_ERROR unless explicitly requested, since it
+      ;; is huge
+      (let ((we (lookup-type "Windows.Win32.Foundation" "WIN32_ERROR")))
+       (unless (member we types)
+         (setf (gethash we *cffi-simple-seen*) :ignore)))
+      (map 'nil 'gen-cffi-simple (reverse types))
+      (map 'nil 'gen-cffi-simple (reverse functions)))))
+
+(defun simple-ffi-apropos (name &rest more-names)
+  ;; todo: add substring matches and/or search with #\_ removed?
+  (let ((*apropos*
+          ;; use equalp hash here to make it easier to find things.
+          (make-hash-table :test 'equalp)))
+   (with-winmd (w #p"~/quicklisp/local-projects/3b-winmd/md/Windows.Win32.winmd")
+     (make-apropos)
+     (if more-names
+         (loop for i in (cons name more-names)
+               collect (gethash i *apropos*))
+         (gethash name *apropos*)))))
 
 ;;; dump entire ffi
 #++
@@ -759,15 +828,8 @@
       (loop for (ns n) in functions do (gen-cffi-simple (lookup-function ns n))))))
 #++(ql:quickload '3b-winmd)
 #++
-(let ((*cffi-simple-seen* (make-hash-table))
-      (*cffi-package* "cffi:")
-      (*translate-names-with-namespaces* nil))
-  (let ((types '())
-        (functions '(("Windows.Win32.Foundation" "GetLastError")
-                     ("Windows.Win32.Devices.Display" "QueryDisplayConfig"))))
-    (with-winmd (w #p"~/quicklisp/local-projects/3b-winmd/md/Windows.Win32.winmd")
-      (loop for (ns n) in types do (gen-cffi-simple (lookup-type ns n)))
-      (loop for (ns n) in functions do (gen-cffi-simple (lookup-function ns n))))))
-
+(simple-ffi-gen nil
+                '(("Windows.Win32.Foundation" "GetLastError")
+                  ("Windows.Win32.Devices.Display" "QueryDisplayConfig")))
 
 
