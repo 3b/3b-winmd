@@ -363,7 +363,7 @@
   `(let ((*heap-sizes* (make-hash-table))
          (*table-sizes* (make-array 64 :element-type '(unsigned-byte 32)
                                        :initial-element 0)))
-     (format t "rows = ~s~%" ,rows)
+     #++(format t "rows = ~s~%" ,rows)
      (setf (gethash :string *heap-sizes*)
            (if (logbitp 0 ,heap-sizes) 4 2))
      (setf (gethash :guid *heap-sizes*)
@@ -379,7 +379,7 @@
            for i below 64
            do (when (logbitp i v)
                 (setf (aref *table-sizes* i) (pop sizes))))
-     (format t "table sizes = ~s~%" *table-sizes*)
+     #++(format t "table sizes = ~s~%" *table-sizes*)
      ,@body))
 
 ;;; table index types
@@ -901,21 +901,19 @@
     (exported-type (exported-type-type-namespace x))
     (t nil)))
 
-(defvar *translate-names-with-namespaces* t)
 (defun namespaced-name (x)
-  (if *translate-names-with-namespaces*
-      (typecase x
-        ;; possibly should (optionally?) intern these lists somewhere to
-        ;; allow saving some space
-        (type-def (list :namespace (type-def-type-namespace x)
-                        :name (type-def-type-name x)))
-        (type-ref (list :namespace (type-ref-type-namespace x)
-                        :name (type-ref-type-name x)))
-        (exported-type (list :namespace (exported-type-type-namespace x)
-                             :name (exported-type-type-name x)))
-        (t (name x)))
-      (name x)))
+  (typecase x
+    ;; possibly should (optionally?) intern these lists somewhere to
+    ;; allow saving some space
+    (type-def (list :namespace (type-def-type-namespace x)
+                    :name (type-def-type-name x)))
+    (type-ref (list :namespace (type-ref-type-namespace x)
+                    :name (type-ref-type-name x)))
+    (exported-type (list :namespace (exported-type-type-namespace x)
+                         :name (exported-type-type-name x)))
+    (t (name x))))
 
+(defvar *translate-names-with-namespaces* t)
 (defun namespaced-name/s (x)
   (if *translate-names-with-namespaces*
       (typecase x

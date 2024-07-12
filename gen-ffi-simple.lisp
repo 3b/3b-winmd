@@ -570,6 +570,7 @@
               (format t "~&~%(~a~a (~a ~(~s~))" *cffi-package*
                       (if flag-p "defbitfield" "defcenum")
                       name base-type)
+              ;; todo: add an option to remove common prefix from names
               (loop for f across (type-def-field-list x)
                     for cc = (gethash f *constant-index*)
                     for c = (when cc (constant-value cc))
